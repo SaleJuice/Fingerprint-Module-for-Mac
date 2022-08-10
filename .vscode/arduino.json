@@ -1,5 +1,5 @@
 {
-    "port": "/dev/tty.usbmodem02",
+    "port": "/dev/tty.usbmodem01",
     "configuration": "CDCOnBoot=default,MSCOnBoot=default,DFUOnBoot=default,PartitionScheme=default,DebugLevel=none",
     "board": "esp32:esp32:lolin_s2_mini",
     "sketch": "arduino/arduino.ino"

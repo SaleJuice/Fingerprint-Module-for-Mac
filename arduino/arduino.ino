@@ -1,7 +1,7 @@
 /*
  * @FilePath: /Fingerprint-Module-for-Mac/arduino/arduino.ino
  * @Date: 2022-08-10 14:05:47
- * @LastEditTime: 2022-08-10 14:33:08
+ * @LastEditTime: 2022-08-10 18:55:13
  * @Author: Xiaozhu Lin
  * @E-Mail: linxzh@shanghaitech.edu.cn
  * @Institution: MAgIC Lab, ShanghaiTech University, China
@@ -9,31 +9,18 @@
  */
 
 
-/*****哔哩哔哩演示视频 https://www.bilibili.com/video/BV1jB4y1h7Jz?share_source=copy_web&vd_source=a87486ca7ecd0a754606aaf5b7b2b5ff 里面详细介绍了这个函数的用法****/
-
-#define BLINKER_WIFI
-
-#include "Blinker.h"              //注意添加这个点灯科技的头文件，这个文件GitHub地址：https://github.com/blinker-iot/blinker-library.git
 #include "stdio.h"
-
-#include "Arduino.h"              //如果使用Arduino IDE的话，需要删除这行代码
 #include "SoftwareSerial.h"       //注意添加这个软串口头文件
+
+#include "USB.h"
+#include "USBHIDKeyboard.h"
+USBHIDKeyboard Keyboard;
 
 char auth[] = "";   //输入你的点灯科技的项目密钥
 char ssid[] = "";   //输入你的WiFi账号
 char pswd[] = "";   //输入你的WiFi密码
 
 SoftwareSerial mySerial(4,5);    //软串口引脚，RX：GPIO4    TX：GPIO5
-
-BlinkerButton Button_OneEnroll("OneEnroll");    //单次注册按钮
-BlinkerButton Button_Delete("Delete");          //删除指纹按钮
-BlinkerButton Button_Identify("Identify");      //搜索模式按钮
-BlinkerButton Button_Empty("Empty");            //清空指纹按钮
-BlinkerButton Button_MultEnroll("MultEnroll");  //连接注册按钮
-BlinkerButton Button_Reset("Reset");            //复位模块按钮
-BlinkerButton Button_disconnect("disconnect");  //断开WiFi按钮
-BlinkerButton Button_ON("ON");                  //手动开启继电器按钮
-BlinkerButton Button_OFF("OFF");                //手动关闭继电器按钮
 
 char str[20];    //用于sprint函数的临时数组
 int SearchID,EnrollID;    //搜索指纹的ID号和注册指纹的ID号
@@ -74,10 +61,7 @@ void FPM383C_SendData(int len,uint8_t PS_Databuffer[])
   mySerial.write(PS_Databuffer,len);
   mySerial.flush();
 }
-/********************************************************************以上是软串口接收发送函数的实现****************************************************************/
 
-
-/********************************************************************以下是指纹模块的功能函数的实现****************************************************************/
 void FPM383C_ReceiveData(uint16_t Timeout)
 {
   uint8_t i = 0;
@@ -92,7 +76,10 @@ void FPM383C_ReceiveData(uint16_t Timeout)
     if(i > 15) break; 
   }
 }
+/********************************************************************以上是软串口接收发送函数的实现****************************************************************/
 
+
+/********************************************************************以下是指纹模块的功能函数的实现****************************************************************/
 /*发送休眠指令，让FPM383C模块为下一次Touch中断做准备*/
 void PS_Sleep()
 {
@@ -251,19 +238,23 @@ uint8_t PS_Identify()
   return 0xFF;
 }
 
-/*应答包校验*/
+/*判断指纹是否已经注册过*/
 void SEARCH_ACK_CHECK(uint8_t ACK)
 {
 	if(PS_ReceiveBuffer[6] == 0x07)
 	{
 		switch (ACK)
 		{
-			case 0x00:                          //指令正确
+			case 0x00:  //指令正确
         SearchID = (int)((PS_ReceiveBuffer[10] << 8) + PS_ReceiveBuffer[11]);
         sprintf(str,"Now Search ID: %d",(int)SearchID);
-        Blinker.notify(str);
-        if(SearchID == 0) WiFi_Connected_State = 0;
-        digitalWrite(12,!digitalRead(12));
+        Serial.println(str);
+        if(SearchID == 0) WiFi_Connected_State = 0;  // 为什么要在这里判断一下 'SearchID' ?
+        // 成功之后需要执行的操作:比如「解锁」
+        digitalWrite(15,!digitalRead(15));
+        Keyboard.write(KEY_BACKSPACE);
+        delay(300);
+        Keyboard.print("输入你自己的电脑密码\n");
         if(ErrorNum < 5) ErrorNum = 0;
 				break;
 		}
@@ -271,17 +262,17 @@ void SEARCH_ACK_CHECK(uint8_t ACK)
   for(int i=0;i<20;i++) PS_ReceiveBuffer[i] = 0xFF;
 }
 
-/*注册应答包校验*/
+/*判断指纹是否注册成功*/
 void ENROLL_ACK_CHECK(uint8_t ACK)
 {
 	if(PS_ReceiveBuffer[6] == 0x07)
 	{
 		switch (ACK)
 		{
-			case 0x00:                          //指令正确
+			case 0x00:  //指令正确
         EnrollID = (int)((PS_AutoEnrollBuffer[10] << 8) + PS_AutoEnrollBuffer[11]);
         sprintf(str,"Now Enroll ID: %d",(int)EnrollID);
-        Blinker.notify(str);
+        Serial.println(str);
 				break;
 		}
 	}
@@ -305,32 +296,32 @@ ICACHE_RAM_ATTR void InterruptFun()
 
 
 /****************************************************************以下是点灯科技APP里面按键等组件的实现************************************************************/
-void OneEnroll_callback(const String & state)
+void OneEnroll_callback()
 {
-  Blinker.vibrate(500);
+  delay_ms(500);
   ScanState |= 1<<2;
-  Blinker.notify("OneEnroll Fingerprint");
+  Serial.println("OneEnroll Fingerprint");
 }
 
-void Delete_callback(const String & state)
+void Delete_callback()
 {
-  Blinker.vibrate(500);
+  delay_ms(500);
   ScanState |= 1<<3;
-  Blinker.notify("Delete Fingerprint");
+  Serial.println("Delete Fingerprint");
 }
 
-void Identify_callback(const String & state)
+void Identify_callback()
 {
-  Blinker.vibrate(500);
+  delay_ms(500);
   ScanState &= ~(1<<0);
-  Blinker.notify("MultSearch Fingerprint");
+  Serial.println("MultSearch Fingerprint");
 }
 
-void Empty_callback(const String & state)
+void Empty_callback()
 {
   PageID = 0;
-  Blinker.vibrate(500);
-  Blinker.notify("Empty Fingerprint");
+  delay_ms(500);
+  Serial.println("Empty Fingerprint");
   if(PS_Empty() == 0x00)
   {
     PS_ControlLED(PS_GreenLEDBuffer);
@@ -341,52 +332,51 @@ void Empty_callback(const String & state)
   }
 }
 
-void MultEnroll_callback(const String & state)
+void MultEnroll_callback()
 {
-  Blinker.vibrate(500);
+  delay_ms(500);
   ScanState |= 0x01;
-  Blinker.notify("MultEnroll Fingerprint");
+  Serial.println("MultEnroll Fingerprint");
 }
 
-void Reset_callback(const String & state)
+void Reset_callback()
 {
-  Blinker.vibrate(500);
-  Blinker.notify("Reset Fingerprint");
+  delay_ms(500);
+  Serial.println("Reset Fingerprint");
   PS_Cancel();
   delay(500);
   PS_Sleep();
   attachInterrupt(digitalPinToInterrupt(14),InterruptFun,RISING);
 }
 
-void disconnect_callback(const String & state)
+void disconnect_callback()
 {
   ErrorNum = 0;
-  Blinker.vibrate(500);
-  Blinker.notify("WiFi Disable");
-  Blinker.delay(200);
-  Blinker.run();
+  delay_ms(500);
+  Serial.println("WiFi Disable");
   WiFi_Connected_State = 1;
-  Blinker.vibrate(500);
-  Blinker.notify("WiFi Connected");
+  delay_ms(500);
+  Serial.println("WiFi Connected");
 }
 
-void ON_callback(const String & state)
+void ON_callback()
 {
-  Blinker.vibrate(500);
-  Blinker.notify("ON Relay");
-  digitalWrite(12,HIGH);
+  delay_ms(500);
+  Serial.println("ON Relay");
+  digitalWrite(15,HIGH);
 }
 
-void OFF_callback(const String & state)
+void OFF_callback()
 {
-  Blinker.vibrate(500);
-  Blinker.notify("OFF Relay");
-  digitalWrite(12,LOW);
+  delay_ms(500);
+  Serial.println("OFF Relay");
+  digitalWrite(15,LOW);
 }
 
 void DataRead(const String & data)
 {
   PageID = data.toInt();
+  Serial.println(PageID);
   ScanState |= 1<<1;
 }
 /****************************************************************以上是点灯科技APP里面按键等组件的实现************************************************************/
@@ -395,37 +385,45 @@ void DataRead(const String & data)
 
 void setup()
 {  
-  mySerial.begin(57600);                              //软串口波特率，默认FPM383C指纹模块的57600，所以不需要动它
+  Serial.begin(115200);  // 和电脑连接的串口
+  mySerial.begin(57600);  //软串口波特率，默认FPM383C指纹模块的57600，所以不需要动它
 
-  pinMode(2,OUTPUT);                                  //ESP8266，Builtin LED内置的灯引脚模式
-  pinMode(12,OUTPUT);                                 //继电器输出引脚
-  pinMode(14,INPUT);                                  //FPM383C的2脚TouchOUT引脚，用于外部中断
+  pinMode(15,OUTPUT);  //ESP32S2 Builtin LED内置的灯引脚模式
+  pinMode(14,INPUT);  //FPM383C的2脚TouchOUT引脚，用于外部中断
 
-  Blinker.begin(auth, ssid, pswd);
-  Blinker.attachData(DataRead);
-  Button_OneEnroll.attach(OneEnroll_callback);
-  Button_Delete.attach(Delete_callback);
-  Button_Identify.attach(Identify_callback);
-  Button_Empty.attach(Empty_callback);
-  Button_MultEnroll.attach(MultEnroll_callback);
-  Button_Reset.attach(Reset_callback);
-  Button_disconnect.attach(disconnect_callback);
-  Button_ON.attach(ON_callback);
-  Button_OFF.attach(OFF_callback);
-
-  delay_ms(200);                                      //用于FPM383C模块启动延时，不可去掉
+  delay_ms(200);  //用于FPM383C模块启动延时，不可去掉
   PS_Sleep();
   delay_ms(200);
 
-  attachInterrupt(digitalPinToInterrupt(14),InterruptFun,RISING);     //外部中断初始化
+  attachInterrupt(digitalPinToInterrupt(14),InterruptFun,RISING);  //外部中断初始化
+
+  Keyboard.begin();
+  USB.begin();
+
+  delay_ms(3000);
+  Serial.println("Initial Process Successed.");
 }
 
 void loop()
 {
+  if (Serial.available() > 0)  //判读是否串口有数据
+  {
+    String cmd = Serial.readStringUntil('\n');
+    if (cmd == "OneEnroll") OneEnroll_callback();         //单次注册按钮
+    else if (cmd == "Delete") Delete_callback();          //删除指纹按钮
+    else if (cmd == "Identify") Identify_callback();      //搜索模式按钮
+    else if (cmd == "Empty") Empty_callback();            //清空指纹按钮
+    else if (cmd == "MultEnroll") MultEnroll_callback();  //连接注册按钮
+    else if (cmd == "Reset") Reset_callback();            //复位模块按钮
+    else if (cmd == "disconnect") disconnect_callback();  //断开WiFi按钮
+    else if (cmd == "ON") ON_callback();                  //手动开启继电器按钮
+    else if (cmd == "OFF") OFF_callback();                //手动关闭继电器按钮
+    else DataRead(cmd);
+  }
   switch (ScanState)
   {
     //第一步
-    case 0x10:    //搜索指纹模式
+    case 0x10:  //搜索指纹模式
         SEARCH_ACK_CHECK(PS_Identify());
         delay(1000);
         PS_Sleep();
@@ -434,8 +432,8 @@ void loop()
     break;
 
     //第二步
-    case 0x11:    //指纹中断提醒输入指纹ID，执行完毕返回搜索指纹模式
-        Blinker.notify("Please Enter ID First");
+    case 0x11:  //指纹中断提醒输入指纹ID，执行完毕返回搜索指纹模式
+        Serial.println("Please Enter ID First");
         PS_ControlLED(PS_RedLEDBuffer);
         delay(1000);
         PS_Sleep();
@@ -444,8 +442,8 @@ void loop()
     break;
     
     //第三步
-    case 0x12:    //指纹中断提醒按下功能按键，执行完毕返回搜索指纹模式
-        Blinker.notify("Please Press Enroll or Delete Key");
+    case 0x12:  //指纹中断提醒按下功能按键，执行完毕返回搜索指纹模式
+        Serial.println("Please Press Enroll or Delete Key");
         PS_ControlLED(PS_RedLEDBuffer);
         delay(1000);
         PS_Sleep();
@@ -485,7 +483,7 @@ void loop()
     case 0x0A:    //单独指纹删除模式
         if(PS_Delete(PageID) == 0x00)
         {
-          Blinker.notify("Delete Success");
+          Serial.println("Delete Success");
           PS_ControlLED(PS_GreenLEDBuffer);
         }
         ScanState = 0x00;
@@ -494,7 +492,7 @@ void loop()
     default:    //输入错误次数大于等于5次，将重新开启WiFI功能。
         if(WiFi_Connected_State == 0 || ErrorNum >= 5)
         {
-          Blinker.run(); 
+          ; 
         }
     break;
   }
